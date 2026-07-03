@@ -21,8 +21,8 @@ app.add_middleware(
 OR_BASE = "https://openrouter.ai/api/v1"
 HEADERS = {"Authorization": f"Bearer {config.OPENROUTER_API_KEY}", "Content-Type": "application/json"}
 
-TEXT_MODEL = "meta-llama/llama-3.3-70b-instruct:free"
-VISION_MODEL = "meta-llama/llama-3.2-11b-vision-instruct:free"
+TEXT_MODEL = "google/gemini-2.0-flash-exp:free"
+VISION_MODEL = "google/gemini-2.0-flash-exp:free"
 
 
 def safe_json(s: str) -> dict:
