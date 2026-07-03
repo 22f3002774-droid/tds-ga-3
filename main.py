@@ -1,7 +1,6 @@
 import os
 import json
 import re
-import base64
 from datetime import datetime
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -20,12 +19,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-OPENAI_BASE = "https://api.openai.com/v1"
-HEADERS = {"Authorization": f"Bearer {config.OPENAI_API_KEY}", "Content-Type": "application/json"}
+GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta"
+TEXT_MODEL = "gemini-2.0-flash"
+EMBED_MODEL = "text-embedding-004"
 
 
 def safe_json(s: str) -> dict:
-    """Extract a JSON object from a raw LLM string, tolerant of markdown fences."""
     s = s.strip()
     if s.startswith("```"):
         s = s.split("```")[1]
@@ -43,57 +42,41 @@ def safe_json(s: str) -> dict:
     return {}
 
 
-async def llm_json(prompt: str, model: str = "gpt-4o-mini") -> dict:
-    """Call an OpenAI-compatible chat completion and force JSON output."""
+async def gemini_generate(parts: list, json_mode: bool = True) -> str:
+    url = f"{GEMINI_BASE}/models/{TEXT_MODEL}:generateContent?key={config.GEMINI_API_KEY}"
+    body = {"contents": [{"parts": parts}]}
+    if json_mode:
+        body["generationConfig"] = {"response_mime_type": "application/json"}
     async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.post(
-            f"{OPENAI_BASE}/chat/completions",
-            headers=HEADERS,
-            json={
-                "model": model,
-                "messages": [{"role": "user", "content": prompt}],
-                "response_format": {"type": "json_object"},
-                "temperature": 0,
-            },
-        )
+        resp = await client.post(url, json=body)
         data = resp.json()
-        content = data["choices"][0]["message"]["content"]
-        return safe_json(content)
+        try:
+            return data["candidates"][0]["content"]["parts"][0]["text"]
+        except Exception:
+            return json.dumps({"error": data})
 
 
-async def llm_vision_json(image_b64: str, question: str, model: str = "gpt-4o-mini") -> str:
-    """Call a vision-capable model with a base64 image + question, return plain text answer."""
+async def gemini_json(prompt: str) -> dict:
+    text = await gemini_generate([{"text": prompt}], json_mode=True)
+    return safe_json(text)
+
+
+async def gemini_vision_answer(image_b64: str, question: str) -> str:
+    parts = [
+        {"text": f"Answer with ONLY the value, no units/symbols/explanation. Question: {question}"},
+        {"inline_data": {"mime_type": "image/png", "data": image_b64}},
+    ]
+    text = await gemini_generate(parts, json_mode=False)
+    return text.strip()
+
+
+async def gemini_embed(texts: list[str]) -> np.ndarray:
+    url = f"{GEMINI_BASE}/models/{EMBED_MODEL}:batchEmbedContents?key={config.GEMINI_API_KEY}"
+    reqs = [{"model": f"models/{EMBED_MODEL}", "content": {"parts": [{"text": t}]}} for t in texts]
     async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.post(
-            f"{OPENAI_BASE}/chat/completions",
-            headers=HEADERS,
-            json={
-                "model": model,
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": f"Answer with ONLY the value, no units/symbols/explanation. Question: {question}"},
-                            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_b64}"}},
-                        ],
-                    }
-                ],
-                "temperature": 0,
-            },
-        )
+        resp = await client.post(url, json={"requests": reqs})
         data = resp.json()
-        return data["choices"][0]["message"]["content"].strip()
-
-
-async def embed_texts(texts: list[str], model: str = "text-embedding-3-small") -> np.ndarray:
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.post(
-            f"{OPENAI_BASE}/embeddings",
-            headers=HEADERS,
-            json={"model": model, "input": texts},
-        )
-        data = resp.json()
-        vecs = [d["embedding"] for d in data["data"]]
+        vecs = [e["values"] for e in data["embeddings"]]
         return np.array(vecs)
 
 
@@ -104,7 +87,7 @@ async def answer_image(request: Request):
     image_b64 = body.get("image_base64", "")
     question = body.get("question", "")
     try:
-        answer = await llm_vision_json(image_b64, question)
+        answer = await gemini_vision_answer(image_b64, question)
         cleaned = re.sub(r"[^\d.\-]", "", answer) if re.search(r"\d", answer) and not re.search(r"[a-zA-Z]{3,}", answer) else answer
         return {"answer": cleaned if cleaned else answer}
     except Exception as e:
@@ -126,7 +109,7 @@ Invoice text:
 
 Return ONLY the JSON object, no explanation."""
     try:
-        result = await llm_json(prompt)
+        result = await gemini_json(prompt)
         for k in ["invoice_no", "date", "vendor", "amount", "tax", "currency"]:
             result.setdefault(k, None)
         return result
@@ -150,7 +133,7 @@ Text:
 
 Return ONLY the JSON object."""
     try:
-        result = await llm_json(prompt)
+        result = await gemini_json(prompt)
         out = {}
         for key, typ in schema.items():
             val = result.get(key)
@@ -192,7 +175,7 @@ Document:
 
 Return ONLY the JSON object matching the schema, no extra keys, no explanation."""
     try:
-        result = await llm_json(prompt, model="gpt-4o")
+        result = await gemini_json(prompt)
         return result
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
@@ -205,7 +188,7 @@ async def rank_candidates(request: Request):
     query = body.get("query", "")
     candidates = body.get("candidates", [])
     try:
-        vecs = await embed_texts([query] + candidates)
+        vecs = await gemini_embed([query] + candidates)
         q_vec = vecs[0]
         c_vecs = vecs[1:]
         q_norm = q_vec / np.linalg.norm(q_vec)
@@ -231,7 +214,7 @@ Problem: {problem}
 
 Return ONLY the JSON object."""
     try:
-        result = await llm_json(prompt, model="gpt-4o")
+        result = await gemini_json(prompt)
         result["answer"] = int(round(float(result.get("answer", 0))))
         if len(str(result.get("reasoning", ""))) < 80:
             result["reasoning"] = result.get("reasoning", "") + " " * (80 - len(str(result.get("reasoning", ""))))
