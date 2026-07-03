@@ -51,6 +51,8 @@ async def or_chat(messages: list, model: str = TEXT_MODEL) -> str:
             json={"model": model, "messages": messages, "temperature": 0},
         )
         data = resp.json()
+        if "choices" not in data:
+            raise Exception(f"OpenRouter error: {json.dumps(data)}")
         return data["choices"][0]["message"]["content"]
 
 
@@ -168,7 +170,7 @@ Document:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-# ---------------- Q8: Semantic Search Top-K (LLM picks directly, no external embeddings) ----------------
+# ---------------- Q8: Semantic Search Top-K ----------------
 @app.post("/rank")
 async def rank_candidates(request: Request):
     body = await request.json()
