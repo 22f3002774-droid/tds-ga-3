@@ -1,3 +1,6 @@
-import os
-
-OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "REPLACE-ME")
+EMAIL = "22f3002774@ds.study.iitm.ac.in"
+AIPIPE_TOKEN = "eyJhbGciOiJIUzI1NiJ9.eyJlbWFpbCI6IjIyZjMwMDI3NzRAZHMuc3R1ZHkuaWl0bS5hYy5pbiIsImlhdCI6MTc4Mzg0MjA1NSwiaXNzIjoiaHR0cHM6Ly9haXBpcGUub3JnIiwiYXVkIjoiYWlwaXBlLWFwaSIsImV4cCI6MTc4NDQ0Njg1NX0.M653sdIp44nf5VxMnn2rBJwhTg4u_fWoG9mqB52epg8"
+AIPIPE_BASE = "https://aipipe.org/openai/v1"
+TEXT_MODEL = "gpt-4o-mini"
+VISION_MODEL = "gpt-4o"
+EMBED_MODEL = "text-embedding-3-small"
